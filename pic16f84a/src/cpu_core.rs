@@ -303,7 +303,7 @@ impl Cpu {
 
         if self.returnflag {
             pc = self.stack[self.stackptr as usize];
-            self.stackptr = (self.stackptr - 1) & 0x07;
+            self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
             self.returnflag = false;
 
             self.skipnext = true;
@@ -491,7 +491,7 @@ impl Cpu {
                     self.debug2("ANDLW", self.rom[pc] as u8, false);
                 }
                 0b10_0000..=0b10_0111 => {
-                    self.stackptr = (self.stackptr + 1) & 0x07;
+                    self.stackptr = self.stackptr.wrapping_add(1) & 0x07;
                     self.stack[self.stackptr as usize] = pc;
                     pc = (pc & !0x7ff) | (self.rom[pc] as usize & 0x7ff);
                     skip_pcinc = true;
