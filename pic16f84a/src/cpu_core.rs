@@ -112,7 +112,7 @@ impl Cpu {
 
     // Physical GPIO output
     pub fn gpio_out(&self) -> (u8, u8) {
-        (self.ramrd(REG_PORTA), self.ramrd(REG_PORTB))
+        (self.ram[REG_PORTA as usize], self.ram[REG_PORTB as usize])
     }
 
     pub fn gpio_getdir(&self) -> (u8, u8) {
