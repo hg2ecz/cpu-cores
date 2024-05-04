@@ -90,7 +90,7 @@ impl Cpu {
         self.ram[REG_PCLATH as usize] = 0x00;
         self.ram[REG_INTCON as usize] &= 1;
         self.option_reg = 0xff;
-        self.trisa = 0xff;
+        self.trisa = 0x1f;
         self.trisb = 0xff;
         self.eecon1 &= 0x08;
     }
@@ -104,10 +104,27 @@ impl Cpu {
 
     // Physical GPIO input
     pub fn gpio_in(&mut self, porta: u8, portb: u8) {
-        self.ram[REG_PORTA as usize] =
-            (self.ram[REG_PORTA as usize] & !self.trisa) | (porta & self.trisa);
-        self.ram[REG_PORTB as usize] =
-            (self.ram[REG_PORTB as usize] & !self.trisb) | (portb & self.trisb);
+        let paold = self.ram[REG_PORTA as usize];
+        let pa = (paold & !self.trisa) | (porta & self.trisa);
+        self.ram[REG_PORTA as usize] = pa;
+
+        let pbold = self.ram[REG_PORTB as usize];
+        let pb = (pbold & !self.trisb) | (portb & self.trisb);
+        self.ram[REG_PORTB as usize] = pb;
+
+        // GIE + PORT_CHANGE_ENABLE - PB7..PB4
+        if self.ram[REG_INTCON as usize] & 0x88 == 0x88 && pbold & 0xf0 != pb & 0xf0 {
+            self.ram[REG_INTCON as usize] |= 1; // Port change int flag
+            self.interrupt_activate();
+        }
+        // GIE + RB0/INT source
+        if self.ram[REG_INTCON as usize] & 0x90 == 0x90
+            && ((self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
+                || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1))
+        {
+            self.ram[REG_INTCON as usize] |= 2; // RB0 int flag
+            self.interrupt_activate()
+        }
     }
 
     // Physical GPIO output
@@ -115,7 +132,7 @@ impl Cpu {
         (self.ram[REG_PORTA as usize], self.ram[REG_PORTB as usize])
     }
 
-    pub fn gpio_getdir(&self) -> (u8, u8) {
+    pub fn gpio_getdirection(&self) -> (u8, u8) {
         (self.trisa, self.trisb)
     }
 
@@ -160,7 +177,7 @@ impl Cpu {
                     return;
                 }
                 REG_PORTA => {
-                    self.trisa = data;
+                    self.trisa = data & 0x1f;
                     return;
                 }
                 REG_PORTB => {
@@ -182,7 +199,7 @@ impl Cpu {
             REG_INDF => self.ram[self.ram[REG_INDF as usize] as usize] = data, // INDF, not real mem
             REG_PORTA => {
                 self.ram[REG_PORTA as usize] =
-                    (self.ram[REG_PORTA as usize] & self.trisa) | (data & !self.trisa)
+                    (self.ram[REG_PORTA as usize] & self.trisa) | (data & 0x1F & !self.trisa)
             }
             REG_PORTB => {
                 self.ram[REG_PORTB as usize] =
@@ -214,8 +231,10 @@ impl Cpu {
     fn debug1(&self, s: &str) {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+            let (porta, portb) = self.gpio_out();
+            let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}",
+                "{pc:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}\t\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                 self.ramrd(REG_STATUS) & 0x07,
                 self.wreg
             );
@@ -225,9 +244,11 @@ impl Cpu {
     fn debug2(&self, s: &str, num: u8, num_address: bool) {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+            let (porta, portb) = self.gpio_out();
+            let (trisa, trisb) = self.gpio_getdirection();
             if num_address {
                 println!(
-                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}",
+                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                     self.ramrd(REG_STATUS) & 0x07,
                     self.wreg,
                     self.ramrd(num)
@@ -245,8 +266,10 @@ impl Cpu {
     fn debug3(&self, s: &str, addr: u8, dst: bool) {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+            let (porta, portb) = self.gpio_out();
+            let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t{addr},{}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}",
+                "{pc:04x}:  {s}\t{addr},{}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                 if dst { 'w' } else { 'f' },
                 self.ramrd(REG_STATUS) & 0x07,
                 self.wreg,
@@ -258,8 +281,10 @@ impl Cpu {
     fn debug3num(&self, s: &str, addr: u8, num: u8) {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+            let (porta, portb) = self.gpio_out();
+            let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t{addr},{num}\t\t\tMEMx:{:02x}",
+                "{pc:04x}:  {s}\t{addr},{num}\t\t\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                 self.ramrd(addr)
             );
         }
@@ -267,7 +292,7 @@ impl Cpu {
 
     fn debugjmp(&self, s: &str, jmp: usize) {
         if self.debugmode {
-            let pc = ((self.ramrd(0x0a) as usize) << 8) + self.ramrd(0x02) as usize; // PCLATH and PCL
+            let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
             println!("{pc:04x}:  {s}\t{:#02x}", jmp as u16);
         }
     }
@@ -283,7 +308,8 @@ impl Cpu {
         if self.sleep {
             return;
         }
-        let mut pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+        let mut pc =
+            ((self.ram[REG_PCLATH as usize] as usize) << 8) + self.ram[REG_PCL as usize] as usize;
         let mut skip_increment_pc = false;
         let memptr = self.rom[pc] as u8 & 0x7f;
         let dst_wreg = self.rom[pc] & 0x80 == 0;
@@ -383,7 +409,7 @@ impl Cpu {
                             self.debug1("CLRWDT");
                         }
                         0x01 => {
-                            self.ramwr(0x0b, self.ramrd(0x0b) | 0x80, false); // GIE set
+                            self.ramwr(REG_INTCON, self.ramrd(REG_INTCON) | 0x80, false); // GIE set
                             self.returnflag = true;
                             self.debug1("RETFIE");
                         } // RETFIE. 2 cycle
@@ -533,13 +559,20 @@ impl Cpu {
             pc += 1;
             pc &= ROMSIZE - 1;
         }
-        self.ramwr(REG_PCLATH, (pc >> 8) as u8, false);
-        self.ramwr(REG_PCL, pc as u8, false);
+        self.ram[REG_PCLATH as usize] = (pc >> 8) as u8;
+        self.ram[REG_PCL as usize] = pc as u8;
     }
 
     // ---------------------------
     // Special hardware components
     // ---------------------------
+
+    fn interrupt_activate(&mut self) {
+        let pc = 4; // IRQ entry point
+        self.ram[REG_PCLATH as usize] = (pc >> 8) as u8;
+        self.ram[REG_PCL as usize] = pc as u8;
+        self.ram[REG_INTCON as usize] &= !0x80; // GIE 0
+    }
 
     fn timer(&mut self) {}
 
