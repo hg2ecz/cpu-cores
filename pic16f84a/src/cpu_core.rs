@@ -193,43 +193,22 @@ impl Cpu {
     }
 
     fn get_carry(&self) -> u8 {
-        self.ramrd(REG_STATUS) & 1
+        self.ram[REG_STATUS as usize] & 1
     }
 
     fn set_carry(&mut self, carry: bool) {
-        self.ramwr(
-            REG_STATUS,
-            if carry {
-                self.ramrd(REG_STATUS) | 1
-            } else {
-                self.ramrd(REG_STATUS) & !1
-            },
-            false,
-        );
+        let d = self.ram[REG_STATUS as usize];
+        self.ram[REG_STATUS as usize] = if carry { d | 1 } else { d & !1 };
     }
 
     fn set_dc(&mut self, dc: bool) {
-        self.ramwr(
-            REG_STATUS,
-            if dc {
-                self.ramrd(REG_STATUS) | 2
-            } else {
-                self.ramrd(REG_STATUS) & !2
-            },
-            false,
-        );
+        let d = self.ram[REG_STATUS as usize];
+        self.ram[REG_STATUS as usize] = if dc { d | 2 } else { d & !2 };
     }
 
     fn set_zero(&mut self, val: u8) {
-        self.ramwr(
-            REG_STATUS,
-            if val == 0 {
-                self.ramrd(REG_STATUS) | 4
-            } else {
-                self.ramrd(REG_STATUS) & !4
-            },
-            false,
-        );
+        let d = self.ram[REG_STATUS as usize];
+        self.ram[REG_STATUS as usize] = if val == 0 { d | 4 } else { d & !4 };
     }
 
     fn debug1(&self, s: &str) {
@@ -487,7 +466,7 @@ impl Cpu {
                 0b11_1110 | 0b11_1111 => {
                     let (res, owf) = (self.rom[pc] as u8).overflowing_add(self.wreg);
                     let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
-                    self.ramwr(0, res, true);
+                    self.wreg = res;
                     self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
                     self.set_zero(res);
@@ -495,7 +474,7 @@ impl Cpu {
                 }
                 0b11_1001 => {
                     let res = self.rom[pc] as u8 & self.wreg;
-                    self.ramwr(0, res, true);
+                    self.wreg = res;
                     self.set_zero(res);
                     self.debug2("ANDLW", self.rom[pc] as u8, false);
                 }
@@ -514,17 +493,17 @@ impl Cpu {
                 }
                 0b11_1000 => {
                     let res = self.rom[pc] as u8 | self.wreg;
-                    self.ramwr(0, res, true);
+                    self.wreg = res;
                     self.set_zero(res);
                     self.debug2("IORLW", self.rom[pc] as u8, false);
                 }
                 0b11_0000..=0b11_0011 => {
-                    self.ramwr(0, self.rom[pc] as u8, true);
+                    self.wreg = self.rom[pc] as u8;
                     self.debug2("MOVLW", self.rom[pc] as u8, false);
                 } // MOWLW
                 // RETFIE: see in MOVWF section
                 0b11_0100..=0b11_0111 => {
-                    self.ramwr(0, self.rom[pc] as u8, true);
+                    self.wreg = self.rom[pc] as u8;
                     self.returnflag = true;
                     self.debug2("RETLW", self.rom[pc] as u8, false);
                 } // RETLW, 2 cycle
@@ -533,7 +512,7 @@ impl Cpu {
                 0b11_1100 | 0b11_1101 => {
                     let (res, owf) = (self.rom[pc] as u8).overflowing_sub(self.wreg);
                     let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
-                    self.ramwr(0, res, true);
+                    self.wreg = res;
                     self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
                     self.set_zero(res);
@@ -541,7 +520,7 @@ impl Cpu {
                 }
                 0b11_1010 => {
                     let res = self.rom[pc] as u8 ^ self.wreg;
-                    self.ramwr(0, res, true);
+                    self.wreg = res;
                     self.set_zero(res);
                     self.debug2("XORLW", self.rom[pc] as u8, false);
                 }
