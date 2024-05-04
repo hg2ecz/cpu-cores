@@ -31,7 +31,6 @@ const REG_INTCON: u8 = 0x0b;
 pub struct Cpu {
     //pc: usize,           // 13 bit
     skipnext: bool,
-    rambank: u8,        // 0 or 1
     wreg: u8,           // 8 bit
     ram: [u8; 0x50],    // 8 bit
     rom: [u16; 0x400],  // 14 bit
@@ -60,7 +59,6 @@ impl Cpu {
         let mut cpu = Cpu {
             //pc: 0,
             skipnext: false,
-            rambank: 0,
             wreg: 0,
             ram: [0; 0x50],
             rom: [0x00; ROMSIZE],
@@ -97,9 +95,39 @@ impl Cpu {
         self.eecon1 &= 0x08;
     }
 
+    pub fn nextclk(&mut self) {
+        self.cpu_core();
+        //self.timer();
+        //self.watchdog();
+        //self.eeprom();
+    }
+
+    // Physical GPIO input
+    pub fn gpio_in(&mut self, porta: u8, portb: u8) {
+        self.ram[REG_PORTA as usize] = (self.ramrd(REG_PORTA) & !self.trisa) | (porta & self.trisa);
+        self.ram[REG_PORTB as usize] = (self.ramrd(REG_PORTB) & !self.trisb) | (portb & self.trisb);
+    }
+
+    // Physical GPIO output
+    pub fn gpio_out(&self) -> (u8, u8) {
+        (self.ramrd(REG_PORTA), self.ramrd(REG_PORTB))
+    }
+
+    pub fn gpio_getdir(&self) -> (u8, u8) {
+        (self.trisa, self.trisb)
+    }
+
+    // ------------------
+    // Internal functions
+    // ------------------
+
+    fn get_rambank(&self) -> u8 {
+        (self.ram[REG_STATUS as usize] & 0x20 != 0) as u8
+    }
+
     fn ramrd(&self, addr: u8) -> u8 {
         // special rambank1 cases
-        if self.rambank == 1 {
+        if self.get_rambank() == 1 {
             match addr {
                 REG_TMR0 => return self.option_reg,
                 REG_PORTA => return self.trisa,
@@ -123,7 +151,7 @@ impl Cpu {
             return;
         }
         // DST: RAM or special registers - first: special rambank1 cases
-        if self.rambank == 1 {
+        if self.get_rambank() == 1 {
             match addr {
                 REG_TMR0 => {
                     self.option_reg = data;
@@ -198,7 +226,7 @@ impl Cpu {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
             println!(
-                "{pc:04x}:  {s}\t\tZdC: {:03b} W:{:02x}",
+                "{pc:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}",
                 self.ramrd(REG_STATUS) & 0x07,
                 self.wreg
             );
@@ -210,14 +238,14 @@ impl Cpu {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
             if num_address {
                 println!(
-                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b} W:{:02x}\tMEMx: {:02x}",
+                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}",
                     self.ramrd(REG_STATUS) & 0x07,
                     self.wreg,
                     self.ramrd(num)
                 );
             } else {
                 println!(
-                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b} W:{:02x}",
+                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}",
                     self.ramrd(REG_STATUS) & 0x07,
                     self.wreg,
                 );
@@ -229,8 +257,8 @@ impl Cpu {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
             println!(
-                "{pc:04x}:  {s}\t{addr},{}\tZdC: {:03b} W:{:02x}\tMEMx: {:02x}",
-                !dst as u8,
+                "{pc:04x}:  {s}\t{addr},{}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}",
+                if dst { 'w' } else { 'f' },
                 self.ramrd(REG_STATUS) & 0x07,
                 self.wreg,
                 self.ramrd(addr)
@@ -242,7 +270,7 @@ impl Cpu {
         if self.debugmode {
             let pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
             println!(
-                "{pc:04x}:  {s}\t{addr},{num}\t\t\tMEMx: {:02x}",
+                "{pc:04x}:  {s}\t{addr},{num}\t\t\tMEMx:{:02x}",
                 self.ramrd(addr)
             );
         }
@@ -259,7 +287,10 @@ impl Cpu {
         self.debugmode = debugmode;
     }
 
-    pub fn next(&mut self) {
+    // ------------------
+    // CPU core function
+    // ------------------
+    fn cpu_core(&mut self) {
         let mut pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
         let mut skip_pcinc = false;
         let memptr = self.rom[pc] as u8 & 0x7f;
@@ -286,12 +317,12 @@ impl Cpu {
         if !self.skipnext {
             match self.rom[pc] >> 8 {
                 0b00_0111 => {
-                    let res = self.ramrd(memptr) as u16 + self.wreg as u16;
+                    let (res, owf) = self.ramrd(memptr).overflowing_add(self.wreg);
                     let dc = (self.ramrd(memptr) & 0x0f) + (self.wreg & 0x0f);
-                    self.ramwr(memptr, res as u8, dst_wreg);
-                    self.set_carry(res >> 8 != 0);
+                    self.ramwr(memptr, res, dst_wreg);
+                    self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res as u8);
+                    self.set_zero(res);
                     self.debug3("ADDWF", memptr, dst_wreg);
                 }
                 0b00_0101 => {
@@ -316,13 +347,13 @@ impl Cpu {
                     self.debug3("COMF", memptr, dst_wreg);
                 } // COMF (negation)
                 0b00_0011 => {
-                    let res = self.ramrd(memptr) - 1;
+                    let res = self.ramrd(memptr).wrapping_sub(1);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
                     self.debug3("DECF", memptr, dst_wreg);
                 }
                 0b00_1011 => {
-                    let res = self.ramrd(memptr) - 1;
+                    let res = self.ramrd(memptr).wrapping_sub(1);
                     self.ramwr(memptr, res, dst_wreg);
                     if res == 0 {
                         self.skipnext = true
@@ -330,13 +361,13 @@ impl Cpu {
                     self.debug3("DECFSZ", memptr, dst_wreg);
                 }
                 0b00_1010 => {
-                    let res = self.ramrd(memptr) + 1;
+                    let res = self.ramrd(memptr).wrapping_add(1);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
                     self.debug3("INCF", memptr, dst_wreg);
                 }
                 0b00_1111 => {
-                    let res = self.ramrd(memptr) + 1;
+                    let res = self.ramrd(memptr).wrapping_add(1);
                     self.ramwr(memptr, res, dst_wreg);
                     if res == 0 {
                         self.skipnext = true;
@@ -402,12 +433,12 @@ impl Cpu {
                     self.debug2("RRF", memptr, true);
                 }
                 0b00_0010 => {
-                    let res = self.ramrd(memptr) as u16 - self.wreg as u16;
+                    let (res, owf) = self.ramrd(memptr).overflowing_sub(self.wreg);
                     let dc = (self.ramrd(memptr) & 0x0f) - (self.wreg & 0x0f);
-                    self.ramwr(memptr, res as u8, dst_wreg);
-                    self.set_carry(res >> 8 != 0);
+                    self.ramwr(memptr, res, dst_wreg);
+                    self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res as u8);
+                    self.set_zero(res);
                     self.debug3("SUBWF", memptr, dst_wreg);
                 }
                 0b00_1110 => {
@@ -445,12 +476,12 @@ impl Cpu {
                 }
 
                 0b11_1110 | 0b11_1111 => {
-                    let res = (self.rom[pc] & 0xff) + self.wreg as u16;
+                    let (res, owf) = (self.rom[pc] as u8).overflowing_add(self.wreg);
                     let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
-                    self.ramwr(0, res as u8, true);
-                    self.set_carry(res >> 8 != 0);
+                    self.ramwr(0, res, true);
+                    self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res as u8);
+                    self.set_zero(res);
                     self.debug2("ADDLW", self.rom[pc] as u8, false);
                 }
                 0b11_1001 => {
@@ -491,12 +522,12 @@ impl Cpu {
                 // RETURN: see in MOVWF section
                 // SLEEP: see in MOVWF section
                 0b11_1100 | 0b11_1101 => {
-                    let res = (self.rom[pc] & 0xff) - self.wreg as u16;
+                    let (res, owf) = (self.rom[pc] as u8).overflowing_sub(self.wreg);
                     let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
-                    self.ramwr(0, res as u8, true);
-                    self.set_carry(res >> 8 != 0);
+                    self.ramwr(0, res, true);
+                    self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res as u8);
+                    self.set_zero(res);
                     self.debug2("SUBLW", self.rom[pc] as u8, false);
                 }
                 0b11_1010 => {
@@ -516,4 +547,14 @@ impl Cpu {
         self.ramwr(REG_PCLATH, (pc >> 8) as u8, false);
         self.ramwr(REG_PCL, pc as u8, false);
     }
+
+    // ---------------------------
+    // Special hardware components
+    // ---------------------------
+
+    fn timer(&mut self) {}
+
+    fn watchdog(&mut self) {}
+
+    fn eeprom(&mut self) {}
 }
