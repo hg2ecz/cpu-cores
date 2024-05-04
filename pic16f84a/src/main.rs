@@ -11,6 +11,9 @@ fn main() {
     println!("{code:04x?}\n {eeprom:02x?}");
     let mut cpu = cpu_core::Cpu::new(&code, configbits, &eeprom); // load code
     cpu.set_debug(true);
+    // Test
+    cpu.gpio_in(0x00, 0x00);
+    let (_pa, _pb) = cpu.gpio_out();
     loop {
         cpu.nextclk();
         // cpu.gpio_in(pa_in, pb_in);

@@ -81,6 +81,7 @@ impl Cpu {
         cpu
     }
 
+    // Reset CPU
     pub fn reset(&mut self) {
         self.ram[REG_PCL] = 0x00;
         self.ram[REG_STATUS] = 0b0001_1000 | (self.ram[REG_STATUS] & 0x07);
@@ -92,11 +93,17 @@ impl Cpu {
         self.eecon1 &= 0x08;
     }
 
+    // Ov every CLK - it is the main function
     pub fn nextclk(&mut self) {
         self.cpu_core();
         self.timer();
         self.watchdog();
         self.eeprom();
+    }
+
+    // Set or unset debug print
+    pub fn set_debug(&mut self, debugmode: bool) {
+        self.debugmode = debugmode;
     }
 
     // Physical GPIO input
@@ -110,23 +117,20 @@ impl Cpu {
         self.ram[REG_PORTB] = pb;
 
         // GIE + PORT_CHANGE_ENABLE - PB7..PB4
-        if self.ram[REG_INTCON] & 0x88 == 0x88 && pbold & 0xf0 != pb & 0xf0 {
-            let rold = self.ram[REG_INTCON];
-            self.ram[REG_INTCON] |= 1; // Port change int flag
-            if rold != self.ram[REG_INTCON] {
+        if pbold & 0xf0 != pb & 0xf0 {
+            if self.ram[REG_INTCON] & 0x89 == 0x88 {
                 self.interrupt_activate();
             }
+            self.ram[REG_INTCON] |= 1; // Port change int flag
         }
         // GIE + RB0/INT source
-        if self.ram[REG_INTCON] & 0x90 == 0x90
-            && ((self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
-                || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1))
+        if (self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
+            || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1)
         {
-            let rold = self.ram[REG_INTCON];
-            self.ram[REG_INTCON] |= 2; // RB0 int flag
-            if rold != self.ram[REG_INTCON] {
+            if self.ram[REG_INTCON] & 0x92 == 0x90 {
                 self.interrupt_activate();
             }
+            self.ram[REG_INTCON] |= 2; // RB0 int flag
         }
     }
 
@@ -135,6 +139,7 @@ impl Cpu {
         (self.ram[REG_PORTA], self.ram[REG_PORTB])
     }
 
+    // This shows, which port is out and which is input. Mostly for debug only.
     pub fn gpio_getdirection(&self) -> (u8, u8) {
         (self.trisa, self.trisb)
     }
@@ -299,10 +304,6 @@ impl Cpu {
             let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
             println!("{pc:04x}:  {s}\t{:#02x}", jmp as u16);
         }
-    }
-
-    pub fn set_debug(&mut self, debugmode: bool) {
-        self.debugmode = debugmode;
     }
 
     // ------------------
