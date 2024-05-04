@@ -22,7 +22,7 @@ const REG_STATUS: usize = 0x03;
 const REG_FSR: usize = 0x04;
 const REG_PORTA: usize = 0x05; // TRISA
 const REG_PORTB: usize = 0x06; // TRISB
-                               //const REG_UNIMPLEMENTED: u8 = 0x07;
+                               // 0x07;
 const REG_EEDATA: usize = 0x08; // EECON1
 const REG_EEADDR: usize = 0x09; // EECON2
 const REG_PCLATH: usize = 0x0a;
@@ -149,7 +149,7 @@ impl Cpu {
                 REG_PORTA => return self.trisa,
                 REG_PORTB => return self.trisb,
                 REG_EEDATA => return self.eecon1,
-                REG_EEADDR => return self.eecon2,
+                REG_EEADDR => return self.eecon2, // 0x55 0xAA before write
                 _ => (),
             }
         }
@@ -612,5 +612,19 @@ impl Cpu {
         }
     }
 
-    fn eeprom(&mut self) {}
+    fn eeprom(&mut self) {
+        // Checking of eecon2 0x55 0xaa steps are missing here.
+        if self.eecon1 & 6 == 6 {
+            self.eeprom[self.ram[REG_EEADDR] as usize] = self.ram[REG_EEDATA];
+            if self.ram[REG_INTCON] & 0xc0 == 0xc0 && self.eecon1 & 0x10 == 0 {
+                self.interrupt_activate();
+            }
+            self.eecon1 &= !2;
+            self.eecon1 |= 0x10;
+        }
+        if self.eecon1 & 1 == 1 {
+            self.ram[REG_EEDATA] = self.eeprom[self.ram[REG_EEADDR] as usize];
+            self.eecon1 &= !1;
+        }
+    }
 }
