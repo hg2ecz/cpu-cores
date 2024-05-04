@@ -100,7 +100,7 @@ impl Cpu {
     // Ov every CLK - it is the main function
     pub fn nextclk(&mut self) {
         self.cpu_core();
-        self.timer_wdt();
+        self.timer_wdt(true); // true: from nextclk
         self.eeprom();
     }
 
@@ -112,7 +112,8 @@ impl Cpu {
     // Physical GPIO input
     pub fn gpio_in(&mut self, porta: u8, portb: u8) {
         let paold = self.ram[REG_PORTA];
-        self.ram[REG_PORTA] = (paold & !self.trisa) | (porta & self.trisa);
+        let pa = (paold & !self.trisa) | (porta & self.trisa);
+        self.ram[REG_PORTA] = pa;
 
         let pbold = self.ram[REG_PORTB];
         let pb = (pbold & !self.trisb) | (portb & self.trisb);
@@ -120,6 +121,13 @@ impl Cpu {
 
         // set INTF, RBIF and activate IRQ
         self.portb_change_irq(pbold, pb);
+        // TIMER from RA4 Low-High or High-Low edge
+        if (self.option_reg & 0x20 == 0 && paold & 0x10 != pa & 0x10)
+            && ((self.option_reg & 0x10 == 0 && pa & 0x10 == 0x10)
+                || (self.option_reg & 0x10 == 0x10 && pa & 0x10 == 0x00))
+        {
+            self.timer_wdt(false)
+        } // false: from gpio
     }
 
     // Physical GPIO output
@@ -584,7 +592,11 @@ impl Cpu {
         }
     }
 
-    fn timer_wdt(&mut self) {
+    fn timer_wdt(&mut self, from_nextclk: bool) {
+        // called from_nextclk and from gpio_in
+        if self.option_reg & 0x20 == 0x20 && from_nextclk {
+            return;
+        };
         let mut tmr_event = false;
         self.psc_ct = self.psc_ct.wrapping_add(1);
         if self.psc_ct & (1 << (self.option_reg & 7)) != 0 {
