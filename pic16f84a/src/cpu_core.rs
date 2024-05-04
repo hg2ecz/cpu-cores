@@ -104,8 +104,10 @@ impl Cpu {
 
     // Physical GPIO input
     pub fn gpio_in(&mut self, porta: u8, portb: u8) {
-        self.ram[REG_PORTA as usize] = (self.ramrd(REG_PORTA) & !self.trisa) | (porta & self.trisa);
-        self.ram[REG_PORTB as usize] = (self.ramrd(REG_PORTB) & !self.trisb) | (portb & self.trisb);
+        self.ram[REG_PORTA as usize] =
+            (self.ram[REG_PORTA as usize] & !self.trisa) | (porta & self.trisa);
+        self.ram[REG_PORTB as usize] =
+            (self.ram[REG_PORTB as usize] & !self.trisb) | (portb & self.trisb);
     }
 
     // Physical GPIO output
@@ -180,11 +182,11 @@ impl Cpu {
             REG_INDF => self.ram[self.ram[REG_INDF as usize] as usize] = data, // INDF, not real mem
             REG_PORTA => {
                 self.ram[REG_PORTA as usize] =
-                    (self.ramrd(REG_PORTA) & self.trisa) | (data & !self.trisa)
+                    (self.ram[REG_PORTA as usize] & self.trisa) | (data & !self.trisa)
             }
             REG_PORTB => {
                 self.ram[REG_PORTB as usize] =
-                    (self.ramrd(REG_PORTB) & self.trisb) | (data & !self.trisb)
+                    (self.ram[REG_PORTB as usize] & self.trisb) | (data & !self.trisb)
             }
             _ => self.ram[addr as usize] = data,
         }
