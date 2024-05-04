@@ -97,9 +97,9 @@ impl Cpu {
 
     pub fn nextclk(&mut self) {
         self.cpu_core();
-        //self.timer();
-        //self.watchdog();
-        //self.eeprom();
+        self.timer();
+        self.watchdog();
+        self.eeprom();
     }
 
     // Physical GPIO input
@@ -177,7 +177,15 @@ impl Cpu {
             }
         }
         match addr {
-            0x00 => self.ram[self.ram[REG_INDF as usize] as usize] = data, // INDF, not real mem
+            REG_INDF => self.ram[self.ram[REG_INDF as usize] as usize] = data, // INDF, not real mem
+            REG_PORTA => {
+                self.ram[REG_PORTA as usize] =
+                    (self.ramrd(REG_PORTA) & self.trisa) | (data & !self.trisa)
+            }
+            REG_PORTB => {
+                self.ram[REG_PORTB as usize] =
+                    (self.ramrd(REG_PORTB) & self.trisb) | (data & !self.trisb)
+            }
             _ => self.ram[addr as usize] = data,
         }
     }
@@ -291,15 +299,14 @@ impl Cpu {
     // CPU core function
     // ------------------
     fn cpu_core(&mut self) {
-        let mut pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
-        let mut skip_pcinc = false;
-        let memptr = self.rom[pc] as u8 & 0x7f;
-        let dst_wreg = self.rom[pc] & 0x80 == 0;
-        let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
-
         if self.sleep {
             return;
         }
+        let mut pc = ((self.ramrd(REG_PCLATH) as usize) << 8) + self.ramrd(REG_PCL) as usize;
+        let mut skip_increment_pc = false;
+        let memptr = self.rom[pc] as u8 & 0x7f;
+        let dst_wreg = self.rom[pc] & 0x80 == 0;
+        let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
 
         if self.returnflag {
             pc = self.stack[self.stackptr as usize];
@@ -307,7 +314,7 @@ impl Cpu {
             self.returnflag = false;
 
             self.skipnext = true;
-            skip_pcinc = true;
+            skip_increment_pc = true;
         }
         if self.callflag {
             self.callflag = false;
@@ -494,13 +501,13 @@ impl Cpu {
                     self.stackptr = self.stackptr.wrapping_add(1) & 0x07;
                     self.stack[self.stackptr as usize] = pc;
                     pc = (pc & !0x7ff) | (self.rom[pc] as usize & 0x7ff);
-                    skip_pcinc = true;
+                    skip_increment_pc = true;
                     self.debugjmp("CALL", pc);
                 }
                 // CLRWDT: see in MOVWF section
                 0b10_1000..=0b10_1111 => {
                     pc = (pc & !0x7ff) | (self.rom[pc] as usize & 0x7ff);
-                    skip_pcinc = true;
+                    skip_increment_pc = true;
                     self.debugjmp("GOTO", pc);
                 }
                 0b11_1000 => {
@@ -541,8 +548,9 @@ impl Cpu {
         } else {
             self.skipnext = false;
         }
-        if !skip_pcinc {
-            pc = (pc + 1) & (ROMSIZE - 1);
+        if !skip_increment_pc {
+            pc += 1;
+            pc &= ROMSIZE - 1;
         }
         self.ramwr(REG_PCLATH, (pc >> 8) as u8, false);
         self.ramwr(REG_PCL, pc as u8, false);
