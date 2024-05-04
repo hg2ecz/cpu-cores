@@ -111,16 +111,22 @@ impl Cpu {
 
         // GIE + PORT_CHANGE_ENABLE - PB7..PB4
         if self.ram[REG_INTCON] & 0x88 == 0x88 && pbold & 0xf0 != pb & 0xf0 {
+            let rold = self.ram[REG_INTCON];
             self.ram[REG_INTCON] |= 1; // Port change int flag
-            self.interrupt_activate();
+            if rold != self.ram[REG_INTCON] {
+                self.interrupt_activate();
+            }
         }
         // GIE + RB0/INT source
         if self.ram[REG_INTCON] & 0x90 == 0x90
             && ((self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
                 || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1))
         {
+            let rold = self.ram[REG_INTCON];
             self.ram[REG_INTCON] |= 2; // RB0 int flag
-            self.interrupt_activate()
+            if rold != self.ram[REG_INTCON] {
+                self.interrupt_activate();
+            }
         }
     }
 
