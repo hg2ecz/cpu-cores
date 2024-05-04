@@ -149,7 +149,7 @@ impl Cpu {
                 REG_PORTA => return self.trisa,
                 REG_PORTB => return self.trisb,
                 REG_EEDATA => return self.eecon1,
-                REG_EEADDR => return self.eecon2, // 0x55 0xAA before write
+                REG_EEADDR => return 0, // self.eecon2 - 0x55 0xAA before EEPROM write
                 _ => (),
             }
         }
@@ -187,7 +187,7 @@ impl Cpu {
                     return;
                 }
                 REG_EEADDR => {
-                    self.eecon2 = data;
+                    self.eecon2 = data; // self.eecon2 - 0x55 0xAA before EEPROM write
                     return;
                 }
                 _ => (),
