@@ -30,6 +30,7 @@ const REG_INTCON: usize = 0x0b;
 
 pub struct Cpu {
     // PC: from memreg
+    configbits: u16,
     skipnext: bool,
     wreg: u8,          // 8 bit Wreg
     ram: [u8; 0x50],   // 8 bit
@@ -38,6 +39,7 @@ pub struct Cpu {
     stackptr: usize,   // 8 level stack
 
     psc_ct: u8,       // timer prescaler counter
+    tmrdiv2: bool,    // timer: div2
     sleep: bool,      // sleep instruction, cpu halt
     callflag: bool,   // 2 cycle
     returnflag: bool, // 2 cycle
@@ -54,8 +56,9 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(prog: &[u16], _configbits: u16, eeprom: &[u8]) -> Self {
+    pub fn new(prog: &[u16], configbits: u16, eeprom: &[u8]) -> Self {
         let mut cpu = Cpu {
+            configbits,
             skipnext: false,
             wreg: 0,
             ram: [0; 0x50],
@@ -63,6 +66,7 @@ impl Cpu {
             stack: [0; 8],
             stackptr: 0,
             psc_ct: 0,
+            tmrdiv2: false,
             sleep: false,
             callflag: false,
             returnflag: false,
@@ -96,8 +100,7 @@ impl Cpu {
     // Ov every CLK - it is the main function
     pub fn nextclk(&mut self) {
         self.cpu_core();
-        self.timer();
-        self.watchdog();
+        self.timer_wdt();
         self.eeprom();
     }
 
@@ -109,29 +112,14 @@ impl Cpu {
     // Physical GPIO input
     pub fn gpio_in(&mut self, porta: u8, portb: u8) {
         let paold = self.ram[REG_PORTA];
-        let pa = (paold & !self.trisa) | (porta & self.trisa);
-        self.ram[REG_PORTA] = pa;
+        self.ram[REG_PORTA] = (paold & !self.trisa) | (porta & self.trisa);
 
         let pbold = self.ram[REG_PORTB];
         let pb = (pbold & !self.trisb) | (portb & self.trisb);
         self.ram[REG_PORTB] = pb;
 
-        // GIE + PORT_CHANGE_ENABLE - PB7..PB4
-        if pbold & 0xf0 != pb & 0xf0 {
-            if self.ram[REG_INTCON] & 0x89 == 0x88 {
-                self.interrupt_activate();
-            }
-            self.ram[REG_INTCON] |= 1; // Port change int flag
-        }
-        // GIE + RB0/INT source
-        if (self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
-            || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1)
-        {
-            if self.ram[REG_INTCON] & 0x92 == 0x90 {
-                self.interrupt_activate();
-            }
-            self.ram[REG_INTCON] |= 2; // RB0 int flag
-        }
+        // set INTF, RBIF and activate IRQ
+        self.portb_change_irq(pbold, pb);
     }
 
     // Physical GPIO output
@@ -577,9 +565,52 @@ impl Cpu {
         self.ram[REG_INTCON] &= !0x80; // GIE 0
     }
 
-    fn timer(&mut self) {}
+    fn portb_change_irq(&mut self, pbold: u8, pb: u8) {
+        // GIE + PORT_CHANGE_ENABLE - PB7..PB4
+        if pbold & 0xf0 != pb & 0xf0 {
+            if self.ram[REG_INTCON] & 0x89 == 0x88 {
+                self.interrupt_activate();
+            }
+            self.ram[REG_INTCON] |= 1; // Port change int flag
+        }
+        // GIE + RB0/INT source
+        if (self.option_reg & 0x40 == 0 && pbold & 1 == 1 && pb & 1 == 0)
+            || (self.option_reg & 0x40 != 0 && pbold & 1 == 0 && pb & 1 == 1)
+        {
+            if self.ram[REG_INTCON] & 0x92 == 0x90 {
+                self.interrupt_activate();
+            }
+            self.ram[REG_INTCON] |= 2; // RB0 int flag
+        }
+    }
 
-    fn watchdog(&mut self) {}
+    fn timer_wdt(&mut self) {
+        let mut tmr_event = false;
+        self.psc_ct = self.psc_ct.wrapping_add(1);
+        if self.psc_ct & (1 << (self.option_reg & 7)) != 0 {
+            self.psc_ct = 0;
+            // TMR0 or WDT
+            if self.option_reg & 0x08 == 0 {
+                tmr_event = true;
+            } else if self.configbits & 4 != 0 {
+                self.reset()
+            }
+        }
+        // TMR0 without PSA  or  PSA event
+        if self.option_reg & 0x08 != 0 || tmr_event {
+            self.tmrdiv2 = !self.tmrdiv2;
+            if !self.tmrdiv2 {
+                let (ct, owf) = self.ram[REG_TMR0].overflowing_add(1);
+                self.ram[REG_TMR0] = ct;
+                if owf {
+                    if self.ram[REG_INTCON] & 0xa4 == 0xa0 {
+                        self.interrupt_activate();
+                    }
+                    self.ram[REG_INTCON] |= 4; // RB0 int flag
+                }
+            }
+        }
+    }
 
     fn eeprom(&mut self) {}
 }
