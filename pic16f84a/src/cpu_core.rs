@@ -121,10 +121,8 @@ impl Cpu {
         let pb = (pbold & !self.trisb) | (portb & self.trisb);
         self.ram[REG_PORTB] = pb;
 
-        // set INTF, RBIF and activate IRQ
-        self.portb_change_irq(pbold, pb);
-        // TIMER from RA4
-        self.timer_wdt_from_gpio(paold, pa);
+        self.portb_change_irq(pbold, pb); // set INTF, RBIF and activate IRQ
+        self.timer_wdt_from_gpio(paold, pa); // TIMER from RA4
     }
 
     // Physical GPIO output
