@@ -87,6 +87,14 @@ impl Cpu {
         cpu
     }
 
+    pub fn eeprom_load_laststate(&mut self, eeprom: [u8; EEPROMSIZE]) {
+        self.eeprom = eeprom;
+    }
+
+    pub fn eeprom_save_laststate(&self) -> [u8; EEPROMSIZE] {
+        self.eeprom
+    }
+
     // Reset CPU
     pub fn reset(&mut self) {
         self.ram[REG_PCL] = 0x00;

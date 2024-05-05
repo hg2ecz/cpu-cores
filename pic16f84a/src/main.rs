@@ -10,14 +10,29 @@ fn main() {
     let (code, configbits, eeprom) = readhexfile::readhexfile(&filename);
     println!("{code:04x?}\n {eeprom:02x?}");
     let mut cpu = cpu_core::Cpu::new(&code, configbits, &eeprom); // load code
-    cpu.set_debug(true);
-    // Test
-    cpu.gpio_in(0x00, 0x00);
-    let (_pa, _pb) = cpu.gpio_out();
+
+    // Demo - save eeprom & load eeprom
+    // let mut eeprom = [0u8; cpu_core::EEPROMSIZE];
+    let eeprom = cpu.eeprom_save_laststate();
+    cpu.eeprom_load_laststate(eeprom); // from saved file
+
+    // main
+    cpu.set_debug(true); // set or unset (false)
     loop {
         cpu.nextclk();
-        // cpu.gpio_in(pa_in, pb_in);
-        // let (pa, pb) = cpu.gpio_out();
-        // let (pa_dir, pb_dir) = cpu.gpio_getdirection();
+
+        // examples - GPIO IN / OUT
+        let pa_in = 0x00;
+        let pb_in = 0x00;
+        cpu.gpio_in(pa_in, pb_in);
+        let (_pa, _pb) = cpu.gpio_out();
+        let (_pa_dir, _pb_dir) = cpu.gpio_getdirection(); // for debug & review
+
+        // an example break
+        if _pb == 0x55 {
+            break;
+        }
     }
+    // at end, the contents of eeprom is readable & you can save to file.
+    let _eeprom_out = cpu.eeprom_save_laststate(); // [0u8; cpu_core::EEPROMSIZE];
 }
