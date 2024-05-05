@@ -20,7 +20,7 @@ const RAMSIZE: usize = 0x50;
 const REG_INDF: usize = 0x00;
 const REG_TMR0: usize = 0x01; // OPTION
 const REG_PCL: usize = 0x02;
-const REG_STATUS: usize = 0x03;
+const REG_STATUS: usize = 0x03; // self.status
 const REG_FSR: usize = 0x04;
 const REG_PORTA: usize = 0x05; // TRISA
 const REG_PORTB: usize = 0x06; // TRISB
@@ -35,6 +35,7 @@ pub struct Cpu {
     skipnext: bool, // skip next instruction
     wait1clk: bool, // wait 1 clk
     pc: usize,
+    status: u8,          // status register
     wreg: u8,            // 8 bit Wreg
     ram: [u8; RAMSIZE],  // 8 bit
     rom: [u16; ROMSIZE], // 14 bit
@@ -65,6 +66,7 @@ impl Cpu {
             skipnext: false,
             wait1clk: false,
             pc: 0,
+            status: 0,
             wreg: 0,
             ram: [0; RAMSIZE],
             rom: [0x00; ROMSIZE],
@@ -103,7 +105,7 @@ impl Cpu {
     // Reset CPU
     pub fn reset(&mut self) {
         self.pc = 0;
-        self.ram[REG_STATUS] = 0b0001_1000 | (self.ram[REG_STATUS] & 0x07);
+        self.status = 0b0001_1000 | (self.status & 0x07);
         self.ram[REG_INTCON] &= 1;
         self.option_reg = 0xff;
         self.trisa = 0x1f;
@@ -156,7 +158,7 @@ impl Cpu {
     // Internal functions
     // ------------------
     fn get_rambank(&self) -> u8 {
-        (self.ram[REG_STATUS] & 0x20 != 0) as u8
+        (self.status & 0x20 != 0) as u8
     }
 
     fn ramrd(&self, addr_in: u8) -> u8 {
@@ -176,6 +178,7 @@ impl Cpu {
         match addr {
             REG_INDF => self.ram[self.ram[REG_FSR] as usize], // INDF, not real mem
             REG_PCL => self.pc as u8,
+            REG_STATUS => self.status,
             REG_PCLATH => 0, // see: documentation
             _ => self.ram[addr],
         }
@@ -218,6 +221,7 @@ impl Cpu {
             REG_INDF => self.ram[self.ram[REG_INDF] as usize] = data, // INDF, not real mem
             REG_PCL => self.pc = (self.pc & 0xff00) | data as usize,
             REG_PCLATH => self.pc = ((self.pc & 0x00ff) | ((data as usize) << 8)) % ROMSIZE,
+            REG_STATUS => self.status = (self.status & !(1 << 5)) | (data & (1 << 5)),
             REG_PORTA => {
                 self.ram[REG_PORTA] =
                     (self.ram[REG_PORTA] & self.trisa) | (data & 0x1F & !self.trisa)
@@ -229,23 +233,25 @@ impl Cpu {
         }
     }
 
+    #[inline(always)]
     fn get_carry(&self) -> u8 {
-        self.ram[REG_STATUS] & 1
+        self.status & 1
     }
 
+    #[inline(always)]
     fn set_carry(&mut self, carry: bool) {
-        let d = self.ram[REG_STATUS];
-        self.ram[REG_STATUS] = if carry { d | 1 } else { d & !1 };
+        self.status = (self.status & 0xfe) | (carry as u8);
     }
 
-    fn set_dc(&mut self, dc: bool) {
-        let d = self.ram[REG_STATUS];
-        self.ram[REG_STATUS] = if dc { d | 2 } else { d & !2 };
+    #[inline(always)]
+    fn set_c_dc_z(&mut self, c: bool, dc: bool, znum: u8) {
+        self.status =
+            (self.status & 0xf8) | ((((znum == 0) as u8) << 2) | ((dc as u8) << 1) | (c as u8));
     }
 
+    #[inline(always)]
     fn set_zero(&mut self, val: u8) {
-        let d = self.ram[REG_STATUS];
-        self.ram[REG_STATUS] = if val == 0 { d | 4 } else { d & !4 };
+        self.status = (self.status & !(1 << 2)) | (((val == 0) as u8) << 2);
     }
 
     fn debug1(&self, s: &str) {
@@ -255,7 +261,7 @@ impl Cpu {
             println!(
                 "{:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}\t\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                 self.debug_pcold,
-                self.ram[REG_STATUS] & 0x07,
+                self.status & 0x07,
                 self.wreg
             );
         }
@@ -270,7 +276,7 @@ impl Cpu {
                     "{:08x} {:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
                     self.debug_clock,
                     self.debug_pcold,
-                    self.ram[REG_STATUS] & 0x07,
+                    self.status & 0x07,
                     self.wreg,
                     self.ramrd(num)
                 );
@@ -279,7 +285,7 @@ impl Cpu {
                     "{:08x} {:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}",
                     self.debug_clock,
                     self.debug_pcold,
-                    self.ram[REG_STATUS] & 0x07,
+                    self.status & 0x07,
                     self.wreg,
                 );
             }
@@ -295,7 +301,7 @@ impl Cpu {
                 self.debug_clock,
                 self.debug_pcold,
                 if dst { 'w' } else { 'f' },
-                self.ram[REG_STATUS] & 0x07,
+                self.status & 0x07,
                 self.wreg,
                 self.ramrd(addr)
             );
@@ -352,9 +358,7 @@ impl Cpu {
                     let (res, owf) = self.ramrd(memptr).overflowing_add(self.wreg);
                     let dc = (self.ramrd(memptr) & 0x0f) + (self.wreg & 0x0f);
                     self.ramwr(memptr, res, dst_wreg);
-                    self.set_carry(owf);
-                    self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res);
+                    self.set_c_dc_z(owf, dc >> 4 != 0, res);
                     self.debug3("ADDWF", memptr, dst_wreg);
                 }
                 0b00_0101 => {
@@ -422,7 +426,7 @@ impl Cpu {
                     match self.rom[self.pc] as u8 {
                         0x64 => {
                             self.psc_ct = 0;
-                            self.ram[REG_STATUS] |= 0x18; // TO:1 PD:1
+                            self.status |= 0x18; // TO:1 PD:1
                             self.debug1("CLRWDT");
                         }
                         0x01 => {
@@ -441,8 +445,8 @@ impl Cpu {
                         0x63 => {
                             self.sleep = true;
                             self.psc_ct = 0;
-                            self.ram[REG_STATUS] &= !0x08;
-                            self.ram[REG_STATUS] |= 0x10; // TO:1 PD:0
+                            self.status &= !0x08;
+                            self.status |= 0x10; // TO:1 PD:0
                             self.debug1("SLEEP");
                         }
                         _ => {
@@ -471,9 +475,7 @@ impl Cpu {
                     let (res, owf) = self.ramrd(memptr).overflowing_sub(self.wreg);
                     let dc = (self.ramrd(memptr) & 0x0f) - (self.wreg & 0x0f);
                     self.ramwr(memptr, res, dst_wreg);
-                    self.set_carry(owf);
-                    self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res);
+                    self.set_c_dc_z(owf, dc >> 4 != 0, res);
                     self.debug3("SUBWF", memptr, dst_wreg);
                 }
                 0b00_1110 => {
@@ -518,9 +520,7 @@ impl Cpu {
                     let (res, owf) = (self.rom[self.pc] as u8).overflowing_add(self.wreg);
                     let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
-                    self.set_carry(owf);
-                    self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res);
+                    self.set_c_dc_z(owf, dc >> 4 != 0, res);
                     self.debug2("ADDLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1001 => {
@@ -568,9 +568,7 @@ impl Cpu {
                     let (res, owf) = (self.rom[self.pc] as u8).overflowing_sub(self.wreg);
                     let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
-                    self.set_carry(owf);
-                    self.set_dc(dc >> 4 != 0);
-                    self.set_zero(res);
+                    self.set_c_dc_z(owf, dc >> 4 != 0, res);
                     self.debug2("SUBLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1010 => {
