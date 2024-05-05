@@ -108,6 +108,7 @@ impl Cpu {
         self.trisb = 0xff;
         self.eecon1 &= 0x08;
 
+        self.skipnext = false;
         self.sleep = false;
     }
 
@@ -333,6 +334,7 @@ impl Cpu {
             return;
         }
 
+        // skip next instruction: DECFSZ, INCFSZ, BTFSC, BTFSS, RETURN
         if !self.skipnext {
             // Most instructions: 6 bit opcode + 1 bit result MEM/WREG direction + 7 bit memaddr
             // Literal instruct:  6 bit opcode + 8 bit data
