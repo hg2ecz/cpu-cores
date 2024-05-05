@@ -97,6 +97,8 @@ impl Cpu {
         self.trisa = 0x1f;
         self.trisb = 0xff;
         self.eecon1 &= 0x08;
+
+        self.sleep = false;
     }
 
     // Ov every CLK - it is the main function
@@ -566,6 +568,7 @@ impl Cpu {
         self.ram[REG_PCLATH] = (pc >> 8) as u8;
         self.ram[REG_PCL] = pc as u8;
         self.ram[REG_INTCON] &= !0x80; // GIE 0
+        self.sleep = false;
     }
 
     fn portb_change_irq(&mut self, pbold: u8, pb: u8) {
@@ -614,8 +617,8 @@ impl Cpu {
                 self.reset()
             }
         }
-        // TMR0 without PSA  or  PSA event
-        if self.option_reg & 0x08 != 0 || tmr_event {
+        // TMR0 without PSA  or  PSA event, but not in sleep mode.
+        if !self.sleep && (self.option_reg & 0x08 != 0 || tmr_event) {
             self.tmrdiv2 = !self.tmrdiv2;
             if !self.tmrdiv2 {
                 let (ct, owf) = self.ram[REG_TMR0].overflowing_add(1);
