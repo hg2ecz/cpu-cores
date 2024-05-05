@@ -7,5 +7,9 @@ edition = "2021"
 
 [dependencies]
 
+[features]
+default = [ "cpu_debug" ]
+cpu_debug = []
+
 [profile.release]
 strip = true

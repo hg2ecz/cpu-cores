@@ -254,6 +254,7 @@ impl Cpu {
         self.status = (self.status & !(1 << 2)) | (((val == 0) as u8) << 2);
     }
 
+    #[cfg(feature = "cpu_debug")]
     fn debug1(&self, s: &str) {
         if self.debugmode {
             let (porta, portb) = self.gpio_out();
@@ -267,6 +268,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(feature = "cpu_debug")]
     fn debug2(&self, s: &str, num: u8, num_address: bool) {
         if self.debugmode {
             let (porta, portb) = self.gpio_out();
@@ -292,6 +294,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(feature = "cpu_debug")]
     fn debug3(&self, s: &str, addr: u8, dst: bool) {
         if self.debugmode {
             let (porta, portb) = self.gpio_out();
@@ -308,6 +311,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(feature = "cpu_debug")]
     fn debug3num(&self, s: &str, addr: u8, num: u8) {
         if self.debugmode {
             let (porta, portb) = self.gpio_out();
@@ -321,6 +325,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(feature = "cpu_debug")]
     fn debugjmp(&self, s: &str, jmp: usize) {
         if self.debugmode {
             println!(
@@ -334,7 +339,10 @@ impl Cpu {
     // CPU core function
     // ------------------
     fn cpu_core(&mut self) {
-        self.debug_clock = self.debug_clock.wrapping_add(1);
+        if cfg!(feature = "cpu_debug") {
+            self.debug_clock = self.debug_clock.wrapping_add(1);
+            self.debug_pcold = self.pc;
+        }
         if self.wait1clk {
             self.wait1clk = false;
             return;
@@ -342,7 +350,6 @@ impl Cpu {
         if self.sleep {
             return;
         }
-        self.debug_pcold = self.pc;
         let mut skip_increment_pc = false;
         let memptr = self.rom[self.pc] as u8 & 0x7f; // low 7 bit memaddr
         let dst_wreg = self.rom[self.pc] & 0x80 == 0; // result direction (Wreg or MEM)
@@ -359,17 +366,20 @@ impl Cpu {
                     let dc = (self.ramrd(memptr) & 0x0f) + (self.wreg & 0x0f);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_c_dc_z(owf, dc >> 4 != 0, res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("ADDWF", memptr, dst_wreg);
                 }
                 0b00_0101 => {
                     let res = self.ramrd(memptr) & self.wreg;
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("ANDWF", memptr, dst_wreg);
                 }
                 0b00_0001 => {
                     self.ramwr(memptr, 0, dst_wreg);
                     self.set_zero(0);
+                    #[cfg(feature = "cpu_debug")]
                     if dst_wreg {
                         self.debug1("CLRW")
                     } else {
@@ -380,12 +390,14 @@ impl Cpu {
                     let res = self.ramrd(memptr) ^ 0xff;
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("COMF", memptr, dst_wreg);
                 } // COMF (negation)
                 0b00_0011 => {
                     let res = self.ramrd(memptr).wrapping_sub(1);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("DECF", memptr, dst_wreg);
                 }
                 0b00_1011 => {
@@ -394,12 +406,14 @@ impl Cpu {
                     if res == 0 {
                         self.skipnext = true
                     }
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("DECFSZ", memptr, dst_wreg);
                 }
                 0b00_1010 => {
                     let res = self.ramrd(memptr).wrapping_add(1);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("INCF", memptr, dst_wreg);
                 }
                 0b00_1111 => {
@@ -408,18 +422,21 @@ impl Cpu {
                     if res == 0 {
                         self.skipnext = true;
                     }
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("INCFSZ", memptr, dst_wreg);
                 }
                 0b00_0100 => {
                     let res = self.ramrd(memptr) | self.wreg;
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("IORWF", memptr, dst_wreg);
                 }
                 0b00_1000 => {
                     let res = self.ramrd(memptr);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("MOVF", memptr, dst_wreg);
                 }
                 0b00_0000 => {
@@ -427,6 +444,7 @@ impl Cpu {
                         0x64 => {
                             self.psc_ct = 0;
                             self.status |= 0x18; // TO:1 PD:1
+                            #[cfg(feature = "cpu_debug")]
                             self.debug1("CLRWDT");
                         }
                         0x01 => {
@@ -434,12 +452,14 @@ impl Cpu {
                             self.pc = self.stack[self.stackptr];
                             self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
                             self.wait1clk = true;
+                            #[cfg(feature = "cpu_debug")]
                             self.debug1("RETFIE");
                         } // RETFIE. 2 cycle
                         0x04 => {
                             self.pc = self.stack[self.stackptr];
                             self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
                             self.wait1clk = true;
+                            #[cfg(feature = "cpu_debug")]
                             self.debug1("RETURN");
                         } // RETURN, 2 cycle
                         0x63 => {
@@ -447,10 +467,12 @@ impl Cpu {
                             self.psc_ct = 0;
                             self.status &= !0x08;
                             self.status |= 0x10; // TO:1 PD:0
+                            #[cfg(feature = "cpu_debug")]
                             self.debug1("SLEEP");
                         }
                         _ => {
                             self.ramwr(memptr, self.wreg, dst_wreg);
+                            #[cfg(feature = "cpu_debug")]
                             if dst_wreg {
                                 self.debug1("NOP");
                             } else {
@@ -463,12 +485,14 @@ impl Cpu {
                     let data = self.ramrd(memptr);
                     self.ramwr(memptr, data << 1 | self.get_carry(), dst_wreg);
                     self.set_carry(data & 0x80 != 0);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("RLF", memptr, true);
                 }
                 0b00_1100 => {
                     let data = self.ramrd(memptr);
                     self.ramwr(memptr, data >> 1 | (self.get_carry() << 7), dst_wreg);
                     self.set_carry(data & 0x01 != 0);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("RRF", memptr, true);
                 }
                 0b00_0010 => {
@@ -476,11 +500,13 @@ impl Cpu {
                     let dc = (self.ramrd(memptr) & 0x0f) - (self.wreg & 0x0f);
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_c_dc_z(owf, dc >> 4 != 0, res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("SUBWF", memptr, dst_wreg);
                 }
                 0b00_1110 => {
                     let r = self.ramrd(memptr);
                     self.ramwr(memptr, (r << 4) | (r >> 4), dst_wreg);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("SWAPF", memptr, dst_wreg);
                 }
 
@@ -488,17 +514,20 @@ impl Cpu {
                     let res = self.ramrd(memptr) ^ self.wreg;
                     self.ramwr(memptr, res, dst_wreg);
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3("XORWF", memptr, dst_wreg);
                 }
 
                 0b01_0000..=0b01_0011 => {
                     let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) & !(1 << bitsetcnt), false);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3num("BCF", memptr, bitsetcnt);
                 }
                 0b01_0100..=0b01_0111 => {
                     let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) | (1 << bitsetcnt), false);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3num("BSF", memptr, bitsetcnt);
                 }
                 0b01_1000..=0b01_1011 => {
@@ -506,6 +535,7 @@ impl Cpu {
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 0 {
                         self.skipnext = true
                     }
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3num("BTFSC", memptr, bitsetcnt);
                 }
                 0b01_1100..=0b01_1111 => {
@@ -513,6 +543,7 @@ impl Cpu {
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 1 {
                         self.skipnext = true
                     }
+                    #[cfg(feature = "cpu_debug")]
                     self.debug3num("BTFSS", memptr, bitsetcnt);
                 }
 
@@ -521,12 +552,14 @@ impl Cpu {
                     let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
                     self.set_c_dc_z(owf, dc >> 4 != 0, res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("ADDLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1001 => {
                     let res = self.rom[self.pc] as u8 & self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("ANDLW", self.rom[self.pc] as u8, false);
                 }
                 0b10_0000..=0b10_0111 => {
@@ -535,6 +568,7 @@ impl Cpu {
                     self.pc = (self.pc & !0x7ff) | (self.rom[self.pc] as usize & 0x7ff);
                     skip_increment_pc = true;
                     self.wait1clk = true;
+                    #[cfg(feature = "cpu_debug")]
                     self.debugjmp("CALL", self.pc);
                 }
                 // CLRWDT: see in MOVWF section
@@ -542,16 +576,19 @@ impl Cpu {
                     self.pc = (self.pc & !0x7ff) | (self.rom[self.pc] as usize & 0x7ff);
                     skip_increment_pc = true;
                     self.wait1clk = true;
+                    #[cfg(feature = "cpu_debug")]
                     self.debugjmp("GOTO", self.pc);
                 }
                 0b11_1000 => {
                     let res = self.rom[self.pc] as u8 | self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("IORLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_0000..=0b11_0011 => {
                     self.wreg = self.rom[self.pc] as u8;
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("MOVLW", self.rom[self.pc] as u8, false);
                 } // MOWLW
                 // RETFIE: see in MOVWF section
@@ -560,6 +597,7 @@ impl Cpu {
                     self.pc = self.stack[self.stackptr];
                     self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
                     self.wait1clk = true;
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("RETLW", self.rom[self.pc] as u8, false);
                 } // RETLW, 2 cycle
                 // RETURN: see in MOVWF section
@@ -569,12 +607,14 @@ impl Cpu {
                     let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
                     self.set_c_dc_z(owf, dc >> 4 != 0, res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("SUBLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1010 => {
                     let res = self.rom[self.pc] as u8 ^ self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
+                    #[cfg(feature = "cpu_debug")]
                     self.debug2("XORLW", self.rom[self.pc] as u8, false);
                 }
                 _ => println!("Unknown opcode: {:04x}", self.rom[self.pc]),
