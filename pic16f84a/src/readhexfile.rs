@@ -18,6 +18,13 @@ fn asc2num(cv: &[char], reverz: bool) -> (u16, u8) {
     (val, chk as u8)
 }
 
+// Intel HEX format:
+//   :     - line start
+//   xx    - length (0..255 data byte)
+//   xx xx - addr (16 bit)
+//   xx    - type (00: data, 01: end)
+//   xx .. - data bytes (length is above)
+//   xx    - add values from previous bytes + this number, the result must be ZERO
 pub fn readhexfile(filename: &str) -> (Vec<u16>, u16, Vec<u8>) {
     let mut code = vec![];
     let mut configbits = 0;

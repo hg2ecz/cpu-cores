@@ -7,14 +7,14 @@ fn main() {
         eprintln!("Argument: pic16f84a HEX file. Exit.");
         std::process::exit(-1);
     };
-    let (code, configbits, eeprom) = readhexfile::readhexfile(&filename);
+
+    let (code, configbits, eeprom) = readhexfile::readhexfile(&filename); // Read iHEX file
     println!("{code:04x?}\n {eeprom:02x?}");
-    let mut cpu = cpu_core::Cpu::new(&code, configbits, &eeprom); // load code
+    let mut cpu = cpu_core::Cpu::new(&code, configbits, &eeprom); // load code into simulated microcontroller
 
     // Demo - save eeprom & load eeprom
-    // let mut eeprom = [0u8; cpu_core::EEPROMSIZE];
-    let eeprom = cpu.eeprom_save_laststate();
-    cpu.eeprom_load_laststate(eeprom); // from saved file
+    let eeprom = cpu.eeprom_save_laststate(); // [0u8; cpu_core::EEPROMSIZE]
+    cpu.eeprom_load_laststate(eeprom); // load from saved data ... here is only a demo
 
     // main
     cpu.set_debug(true); // set or unset (false)

@@ -87,10 +87,12 @@ impl Cpu {
         cpu
     }
 
+    // You can load the last state of EEPROM
     pub fn eeprom_load_laststate(&mut self, eeprom: [u8; EEPROMSIZE]) {
         self.eeprom = eeprom;
     }
 
+    // You can get the last state of EEPROM
     pub fn eeprom_save_laststate(&self) -> [u8; EEPROMSIZE] {
         self.eeprom
     }
@@ -148,7 +150,6 @@ impl Cpu {
     // ------------------
     // Internal functions
     // ------------------
-
     fn get_rambank(&self) -> u8 {
         (self.ram[REG_STATUS] & 0x20 != 0) as u8
     }
@@ -316,9 +317,8 @@ impl Cpu {
         }
         let mut pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
         let mut skip_increment_pc = false;
-        let memptr = self.rom[pc] as u8 & 0x7f;
-        let dst_wreg = self.rom[pc] & 0x80 == 0;
-        let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
+        let memptr = self.rom[pc] as u8 & 0x7f; // low 7 bit memaddr
+        let dst_wreg = self.rom[pc] & 0x80 == 0; // result direction (Wreg or MEM)
 
         if self.returnflag {
             pc = self.stack[self.stackptr];
@@ -334,6 +334,10 @@ impl Cpu {
         }
 
         if !self.skipnext {
+            // Most instructions: 6 bit opcode + 1 bit result MEM/WREG direction + 7 bit memaddr
+            // Literal instruct:  6 bit opcode + 8 bit data
+            // Bit oriented inst: 4 bit opcode + 3 bitnum + 7 bit memaddr
+            // Call instruction:  3 bit opcode + 11 bit addr
             match self.rom[pc] >> 8 {
                 0b00_0111 => {
                     let (res, owf) = self.ramrd(memptr).overflowing_add(self.wreg);
@@ -473,20 +477,24 @@ impl Cpu {
                 }
 
                 0b01_0000..=0b01_0011 => {
+                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) & !(1 << bitsetcnt), false);
                     self.debug3num("BCF", memptr, bitsetcnt);
                 }
                 0b01_0100..=0b01_0111 => {
+                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) | (1 << bitsetcnt), false);
                     self.debug3num("BSF", memptr, bitsetcnt);
                 }
                 0b01_1000..=0b01_1011 => {
+                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 0 {
                         self.skipnext = true
                     }
                     self.debug3num("BTFSC", memptr, bitsetcnt);
                 }
                 0b01_1100..=0b01_1111 => {
+                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 1 {
                         self.skipnext = true
                     }
