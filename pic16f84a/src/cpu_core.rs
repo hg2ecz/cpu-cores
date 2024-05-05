@@ -13,7 +13,9 @@
 */
 
 pub const ROMSIZE: usize = 0x400;
-pub const EEPROMSIZE: usize = 64;
+pub const EEPROMSIZE: usize = 0x40;
+
+const RAMSIZE: usize = 0x50;
 
 const REG_INDF: usize = 0x00;
 const REG_TMR0: usize = 0x01; // OPTION
@@ -32,11 +34,11 @@ pub struct Cpu {
     // PC: from memreg
     configbits: u16,
     skipnext: bool,
-    wreg: u8,          // 8 bit Wreg
-    ram: [u8; 0x50],   // 8 bit
-    rom: [u16; 0x400], // 14 bit
-    stack: [usize; 8], // 13 bit
-    stackptr: usize,   // 8 level stack
+    wreg: u8,            // 8 bit Wreg
+    ram: [u8; RAMSIZE],  // 8 bit
+    rom: [u16; ROMSIZE], // 14 bit
+    stack: [usize; 8],   // 13 bit
+    stackptr: usize,     // 8 level stack
 
     psc_ct: u8,       // timer prescaler counter
     tmrdiv2: bool,    // timer: div2
@@ -49,8 +51,8 @@ pub struct Cpu {
     trisa: u8,
     trisb: u8,
     eecon1: u8,
-    eecon2: u8,         // not a physical register
-    eeprom: [u8; 0x40], // pic16f84a has 64 bytes EEPROM
+    eecon2: u8,               // not a physical register
+    eeprom: [u8; EEPROMSIZE], // pic16f84a has 64 bytes EEPROM
 
     debugmode: bool,
 }
@@ -61,7 +63,7 @@ impl Cpu {
             configbits,
             skipnext: false,
             wreg: 0,
-            ram: [0; 0x50],
+            ram: [0; RAMSIZE],
             rom: [0x00; ROMSIZE],
             stack: [0; 8],
             stackptr: 0,
@@ -551,7 +553,7 @@ impl Cpu {
         }
         if !skip_increment_pc {
             pc += 1;
-            pc &= ROMSIZE - 1;
+            pc %= ROMSIZE;
         }
         self.ram[REG_PCLATH] = (pc >> 8) as u8;
         self.ram[REG_PCL] = pc as u8;
