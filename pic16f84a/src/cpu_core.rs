@@ -31,20 +31,19 @@ const REG_PCLATH: usize = 0x0a;
 const REG_INTCON: usize = 0x0b;
 
 pub struct Cpu {
-    // PC: from memreg
     configbits: u16,
-    skipnext: bool,
+    skipnext: bool, // skip next instruction
+    wait1clk: bool, // wait 1 clk
+    pc: usize,
     wreg: u8,            // 8 bit Wreg
     ram: [u8; RAMSIZE],  // 8 bit
     rom: [u16; ROMSIZE], // 14 bit
     stack: [usize; 8],   // 13 bit
     stackptr: usize,     // 8 level stack
 
-    psc_ct: u8,       // timer prescaler counter
-    tmrdiv2: bool,    // timer: div2
-    sleep: bool,      // sleep instruction, cpu halt
-    callflag: bool,   // 2 cycle
-    returnflag: bool, // 2 cycle
+    psc_ct: u8,    // timer prescaler counter
+    tmrdiv2: bool, // timer: div2
+    sleep: bool,   // sleep instruction, cpu halt
 
     // special register from rambank1
     option_reg: u8,
@@ -55,6 +54,8 @@ pub struct Cpu {
     eeprom: [u8; EEPROMSIZE], // pic16f84a has 64 bytes EEPROM
 
     debugmode: bool,
+    debug_pcold: usize,
+    debug_clock: u32,
 }
 
 impl Cpu {
@@ -62,6 +63,8 @@ impl Cpu {
         let mut cpu = Cpu {
             configbits,
             skipnext: false,
+            wait1clk: false,
+            pc: 0,
             wreg: 0,
             ram: [0; RAMSIZE],
             rom: [0x00; ROMSIZE],
@@ -70,8 +73,6 @@ impl Cpu {
             psc_ct: 0,
             tmrdiv2: false,
             sleep: false,
-            callflag: false,
-            returnflag: false,
 
             trisa: 0,
             trisb: 0,
@@ -80,6 +81,8 @@ impl Cpu {
             eecon2: 0, // not a physical register
             eeprom: [0x00; EEPROMSIZE],
             debugmode: false,
+            debug_pcold: 0,
+            debug_clock: 0,
         };
         cpu.rom[..prog.len()].copy_from_slice(prog);
         cpu.eeprom[..eeprom.len()].copy_from_slice(eeprom);
@@ -99,9 +102,8 @@ impl Cpu {
 
     // Reset CPU
     pub fn reset(&mut self) {
-        self.ram[REG_PCL] = 0x00;
+        self.pc = 0;
         self.ram[REG_STATUS] = 0b0001_1000 | (self.ram[REG_STATUS] & 0x07);
-        self.ram[REG_PCLATH] = 0x00;
         self.ram[REG_INTCON] &= 1;
         self.option_reg = 0xff;
         self.trisa = 0x1f;
@@ -109,7 +111,9 @@ impl Cpu {
         self.eecon1 &= 0x08;
 
         self.skipnext = false;
+        self.wait1clk = false;
         self.sleep = false;
+        self.debug_clock = 0;
     }
 
     // Ov every CLK - it is the main function
@@ -171,6 +175,8 @@ impl Cpu {
         // Remark: all of other registers emulated from RAM
         match addr {
             REG_INDF => self.ram[self.ram[REG_FSR] as usize], // INDF, not real mem
+            REG_PCL => self.pc as u8,
+            REG_PCLATH => 0, // see: documentation
             _ => self.ram[addr],
         }
     }
@@ -210,6 +216,8 @@ impl Cpu {
         }
         match addr {
             REG_INDF => self.ram[self.ram[REG_INDF] as usize] = data, // INDF, not real mem
+            REG_PCL => self.pc = (self.pc & 0xff00) | data as usize,
+            REG_PCLATH => self.pc = ((self.pc & 0x00ff) | ((data as usize) << 8)) % ROMSIZE,
             REG_PORTA => {
                 self.ram[REG_PORTA] =
                     (self.ram[REG_PORTA] & self.trisa) | (data & 0x1F & !self.trisa)
@@ -242,11 +250,11 @@ impl Cpu {
 
     fn debug1(&self, s: &str) {
         if self.debugmode {
-            let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
             let (porta, portb) = self.gpio_out();
             let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}\t\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                "{:04x}:  {s}\t\tZdC: {:03b}  W:{:02x}\t\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                self.debug_pcold,
                 self.ram[REG_STATUS] & 0x07,
                 self.wreg
             );
@@ -255,19 +263,22 @@ impl Cpu {
 
     fn debug2(&self, s: &str, num: u8, num_address: bool) {
         if self.debugmode {
-            let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
             let (porta, portb) = self.gpio_out();
             let (trisa, trisb) = self.gpio_getdirection();
             if num_address {
                 println!(
-                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                    "{:08x} {:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                    self.debug_clock,
+                    self.debug_pcold,
                     self.ram[REG_STATUS] & 0x07,
                     self.wreg,
                     self.ramrd(num)
                 );
             } else {
                 println!(
-                    "{pc:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}",
+                    "{:08x} {:04x}:  {s}\t{num}\tZdC: {:03b}  W:{:02x}",
+                    self.debug_clock,
+                    self.debug_pcold,
                     self.ram[REG_STATUS] & 0x07,
                     self.wreg,
                 );
@@ -277,11 +288,12 @@ impl Cpu {
 
     fn debug3(&self, s: &str, addr: u8, dst: bool) {
         if self.debugmode {
-            let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
             let (porta, portb) = self.gpio_out();
             let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t{addr},{}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                "{:08x} {:04x}:  {s}\t{addr},{}\tZdC: {:03b}  W:{:02x}\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                self.debug_clock,
+                self.debug_pcold,
                 if dst { 'w' } else { 'f' },
                 self.ram[REG_STATUS] & 0x07,
                 self.wreg,
@@ -292,11 +304,12 @@ impl Cpu {
 
     fn debug3num(&self, s: &str, addr: u8, num: u8) {
         if self.debugmode {
-            let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
             let (porta, portb) = self.gpio_out();
             let (trisa, trisb) = self.gpio_getdirection();
             println!(
-                "{pc:04x}:  {s}\t{addr},{num}\t\t\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                "{:08x} {:04x}:  {s}\t{addr},{num}\t\t\tMEMx:{:02x}\t PA:{porta:05b} PB:{portb:08b}  (tra:{trisa:05b} trb:{trisb:08b})",
+                self.debug_clock,
+                self.debug_pcold,
                 self.ramrd(addr)
             );
         }
@@ -304,8 +317,10 @@ impl Cpu {
 
     fn debugjmp(&self, s: &str, jmp: usize) {
         if self.debugmode {
-            let pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
-            println!("{pc:04x}:  {s}\t{:#02x}", jmp as u16);
+            println!(
+                "{:08x} {:04x}:  {s}\t{:#02x}",
+                self.debug_clock, self.debug_pcold, jmp as u16
+            );
         }
     }
 
@@ -313,26 +328,18 @@ impl Cpu {
     // CPU core function
     // ------------------
     fn cpu_core(&mut self) {
+        self.debug_clock = self.debug_clock.wrapping_add(1);
+        if self.wait1clk {
+            self.wait1clk = false;
+            return;
+        }
         if self.sleep {
             return;
         }
-        let mut pc = ((self.ram[REG_PCLATH] as usize) << 8) + self.ram[REG_PCL] as usize;
+        self.debug_pcold = self.pc;
         let mut skip_increment_pc = false;
-        let memptr = self.rom[pc] as u8 & 0x7f; // low 7 bit memaddr
-        let dst_wreg = self.rom[pc] & 0x80 == 0; // result direction (Wreg or MEM)
-
-        if self.returnflag {
-            pc = self.stack[self.stackptr];
-            self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
-            self.returnflag = false;
-
-            self.skipnext = true;
-            skip_increment_pc = true;
-        }
-        if self.callflag {
-            self.callflag = false;
-            return;
-        }
+        let memptr = self.rom[self.pc] as u8 & 0x7f; // low 7 bit memaddr
+        let dst_wreg = self.rom[self.pc] & 0x80 == 0; // result direction (Wreg or MEM)
 
         // skip next instruction: DECFSZ, INCFSZ, BTFSC, BTFSS, RETURN
         if !self.skipnext {
@@ -340,7 +347,7 @@ impl Cpu {
             // Literal instruct:  6 bit opcode + 8 bit data
             // Bit oriented inst: 4 bit opcode + 3 bitnum + 7 bit memaddr
             // Call instruction:  3 bit opcode + 11 bit addr
-            match self.rom[pc] >> 8 {
+            match self.rom[self.pc] >> 8 {
                 0b00_0111 => {
                     let (res, owf) = self.ramrd(memptr).overflowing_add(self.wreg);
                     let dc = (self.ramrd(memptr) & 0x0f) + (self.wreg & 0x0f);
@@ -412,7 +419,7 @@ impl Cpu {
                     self.debug3("MOVF", memptr, dst_wreg);
                 }
                 0b00_0000 => {
-                    match self.rom[pc] as u8 {
+                    match self.rom[self.pc] as u8 {
                         0x64 => {
                             self.psc_ct = 0;
                             self.ram[REG_STATUS] |= 0x18; // TO:1 PD:1
@@ -420,11 +427,15 @@ impl Cpu {
                         }
                         0x01 => {
                             self.ram[REG_INTCON] |= 0x80; // GIE set
-                            self.returnflag = true;
+                            self.pc = self.stack[self.stackptr];
+                            self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
+                            self.wait1clk = true;
                             self.debug1("RETFIE");
                         } // RETFIE. 2 cycle
                         0x04 => {
-                            self.returnflag = true;
+                            self.pc = self.stack[self.stackptr];
+                            self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
+                            self.wait1clk = true;
                             self.debug1("RETURN");
                         } // RETURN, 2 cycle
                         0x63 => {
@@ -479,24 +490,24 @@ impl Cpu {
                 }
 
                 0b01_0000..=0b01_0011 => {
-                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
+                    let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) & !(1 << bitsetcnt), false);
                     self.debug3num("BCF", memptr, bitsetcnt);
                 }
                 0b01_0100..=0b01_0111 => {
-                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
+                    let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     self.ramwr(memptr, self.ramrd(memptr) | (1 << bitsetcnt), false);
                     self.debug3num("BSF", memptr, bitsetcnt);
                 }
                 0b01_1000..=0b01_1011 => {
-                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
+                    let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 0 {
                         self.skipnext = true
                     }
                     self.debug3num("BTFSC", memptr, bitsetcnt);
                 }
                 0b01_1100..=0b01_1111 => {
-                    let bitsetcnt = (self.rom[pc] >> 7) as u8 & 7;
+                    let bitsetcnt = (self.rom[self.pc] >> 7) as u8 & 7;
                     if self.ramrd(memptr) & (1 << bitsetcnt) == 1 {
                         self.skipnext = true
                     }
@@ -504,77 +515,78 @@ impl Cpu {
                 }
 
                 0b11_1110 | 0b11_1111 => {
-                    let (res, owf) = (self.rom[pc] as u8).overflowing_add(self.wreg);
-                    let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
+                    let (res, owf) = (self.rom[self.pc] as u8).overflowing_add(self.wreg);
+                    let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
                     self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
                     self.set_zero(res);
-                    self.debug2("ADDLW", self.rom[pc] as u8, false);
+                    self.debug2("ADDLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1001 => {
-                    let res = self.rom[pc] as u8 & self.wreg;
+                    let res = self.rom[self.pc] as u8 & self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
-                    self.debug2("ANDLW", self.rom[pc] as u8, false);
+                    self.debug2("ANDLW", self.rom[self.pc] as u8, false);
                 }
                 0b10_0000..=0b10_0111 => {
                     self.stackptr = self.stackptr.wrapping_add(1) & 0x07;
-                    self.stack[self.stackptr] = pc;
-                    pc = (pc & !0x7ff) | (self.rom[pc] as usize & 0x7ff);
+                    self.stack[self.stackptr] = self.pc;
+                    self.pc = (self.pc & !0x7ff) | (self.rom[self.pc] as usize & 0x7ff);
                     skip_increment_pc = true;
-                    self.debugjmp("CALL", pc);
+                    self.wait1clk = true;
+                    self.debugjmp("CALL", self.pc);
                 }
                 // CLRWDT: see in MOVWF section
                 0b10_1000..=0b10_1111 => {
-                    pc = (pc & !0x7ff) | (self.rom[pc] as usize & 0x7ff);
+                    self.pc = (self.pc & !0x7ff) | (self.rom[self.pc] as usize & 0x7ff);
                     skip_increment_pc = true;
-                    self.debugjmp("GOTO", pc);
+                    self.wait1clk = true;
+                    self.debugjmp("GOTO", self.pc);
                 }
                 0b11_1000 => {
-                    let res = self.rom[pc] as u8 | self.wreg;
+                    let res = self.rom[self.pc] as u8 | self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
-                    self.debug2("IORLW", self.rom[pc] as u8, false);
+                    self.debug2("IORLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_0000..=0b11_0011 => {
-                    self.wreg = self.rom[pc] as u8;
-                    self.debug2("MOVLW", self.rom[pc] as u8, false);
+                    self.wreg = self.rom[self.pc] as u8;
+                    self.debug2("MOVLW", self.rom[self.pc] as u8, false);
                 } // MOWLW
                 // RETFIE: see in MOVWF section
                 0b11_0100..=0b11_0111 => {
-                    self.wreg = self.rom[pc] as u8;
-                    self.returnflag = true;
-                    self.debug2("RETLW", self.rom[pc] as u8, false);
+                    self.wreg = self.rom[self.pc] as u8;
+                    self.pc = self.stack[self.stackptr];
+                    self.stackptr = self.stackptr.wrapping_sub(1) & 0x07;
+                    self.wait1clk = true;
+                    self.debug2("RETLW", self.rom[self.pc] as u8, false);
                 } // RETLW, 2 cycle
                 // RETURN: see in MOVWF section
                 // SLEEP: see in MOVWF section
                 0b11_1100 | 0b11_1101 => {
-                    let (res, owf) = (self.rom[pc] as u8).overflowing_sub(self.wreg);
-                    let dc = (self.rom[pc] & 0x0f) as u8 - (self.wreg & 0x0f);
+                    let (res, owf) = (self.rom[self.pc] as u8).overflowing_sub(self.wreg);
+                    let dc = (self.rom[self.pc] & 0x0f) as u8 - (self.wreg & 0x0f);
                     self.wreg = res;
                     self.set_carry(owf);
                     self.set_dc(dc >> 4 != 0);
                     self.set_zero(res);
-                    self.debug2("SUBLW", self.rom[pc] as u8, false);
+                    self.debug2("SUBLW", self.rom[self.pc] as u8, false);
                 }
                 0b11_1010 => {
-                    let res = self.rom[pc] as u8 ^ self.wreg;
+                    let res = self.rom[self.pc] as u8 ^ self.wreg;
                     self.wreg = res;
                     self.set_zero(res);
-                    self.debug2("XORLW", self.rom[pc] as u8, false);
+                    self.debug2("XORLW", self.rom[self.pc] as u8, false);
                 }
-                _ => println!("Unknown opcode: {:04x}", self.rom[pc]),
+                _ => println!("Unknown opcode: {:04x}", self.rom[self.pc]),
             }
         } else {
             self.skipnext = false;
         }
         if !skip_increment_pc {
-            pc += 1;
-            pc %= ROMSIZE;
+            self.pc = (self.pc + 1) % ROMSIZE;
         }
-        self.ram[REG_PCLATH] = (pc >> 8) as u8;
-        self.ram[REG_PCL] = pc as u8;
     }
 
     // ---------------------------
@@ -582,9 +594,7 @@ impl Cpu {
     // ---------------------------
 
     fn interrupt_activate(&mut self) {
-        let pc = 4; // IRQ entry point
-        self.ram[REG_PCLATH] = (pc >> 8) as u8;
-        self.ram[REG_PCL] = pc as u8;
+        self.pc = 4; // IRQ entry point
         self.ram[REG_INTCON] &= !0x80; // GIE 0
         self.sleep = false;
     }
