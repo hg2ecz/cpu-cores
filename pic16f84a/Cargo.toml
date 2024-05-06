@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 
 [features]
-default = [ "cpu_debug" ]
+#default = []
+default = ["cpu_debug"]
 cpu_debug = []
 
 [profile.release]

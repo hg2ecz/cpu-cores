@@ -17,6 +17,7 @@ fn main() {
     cpu.eeprom_load_laststate(eeprom); // load from saved data ... here is only a demo
 
     // main
+    #[cfg(feature = "cpu_debug")]
     cpu.set_debug(true); // set or unset (false)
     loop {
         cpu.nextclk();

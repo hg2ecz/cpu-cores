@@ -54,8 +54,11 @@ pub struct Cpu {
     eecon2: u8,               // not a physical register
     eeprom: [u8; EEPROMSIZE], // pic16f84a has 64 bytes EEPROM
 
+    #[cfg(feature = "cpu_debug")]
     debugmode: bool,
+    #[cfg(feature = "cpu_debug")]
     debug_pcold: usize,
+    #[cfg(feature = "cpu_debug")]
     debug_clock: u32,
 }
 
@@ -82,8 +85,12 @@ impl Cpu {
             eecon1: 0,
             eecon2: 0, // not a physical register
             eeprom: [0x00; EEPROMSIZE],
+
+            #[cfg(feature = "cpu_debug")]
             debugmode: false,
+            #[cfg(feature = "cpu_debug")]
             debug_pcold: 0,
+            #[cfg(feature = "cpu_debug")]
             debug_clock: 0,
         };
         cpu.rom[..prog.len()].copy_from_slice(prog);
@@ -115,7 +122,10 @@ impl Cpu {
         self.skipnext = false;
         self.wait1clk = false;
         self.sleep = false;
-        self.debug_clock = 0;
+        #[cfg(feature = "cpu_debug")]
+        {
+            self.debug_clock = 0;
+        }
     }
 
     // Ov every CLK - it is the main function
@@ -126,6 +136,7 @@ impl Cpu {
     }
 
     // Set or unset debug print
+    #[cfg(feature = "cpu_debug")]
     pub fn set_debug(&mut self, debugmode: bool) {
         self.debugmode = debugmode;
     }
@@ -339,7 +350,8 @@ impl Cpu {
     // CPU core function
     // ------------------
     fn cpu_core(&mut self) {
-        if cfg!(feature = "cpu_debug") {
+        #[cfg(feature = "cpu_debug")]
+        {
             self.debug_clock = self.debug_clock.wrapping_add(1);
             self.debug_pcold = self.pc;
         }
@@ -617,7 +629,10 @@ impl Cpu {
                     #[cfg(feature = "cpu_debug")]
                     self.debug2("XORLW", self.rom[self.pc] as u8, false);
                 }
-                _ => println!("Unknown opcode: {:04x}", self.rom[self.pc]),
+                _ => {
+                    #[cfg(feature = "cpu_debug")]
+                    println!("Unknown opcode: {:04x}", self.rom[self.pc]);
+                }
             }
         } else {
             self.skipnext = false;
