@@ -630,8 +630,9 @@ impl Cpu {
                     self.debug2("XORLW", self.rom[self.pc] as u8, false);
                 }
                 _ => {
-                    #[cfg(feature = "cpu_debug")]
-                    println!("Unknown opcode: {:04x}", self.rom[self.pc]);
+                    if cfg!(feature = "cpu_debug") {
+                        println!("Unknown opcode: {:04x}", self.rom[self.pc]);
+                    }
                 }
             }
         } else {
